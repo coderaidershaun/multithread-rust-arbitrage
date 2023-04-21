@@ -3,6 +3,7 @@ use crate::utils;
 use tungstenite::{connect, Message};
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use std::collections::HashMap;
 use serde_json::Value;
 use url::Url;
 
@@ -11,7 +12,10 @@ static BYBIT_WS_API: &str = "wss://stream.bybit.com/v5/public/spot";
 
 static DB_POSITION: usize = 1;
 
-pub async fn websocket_bybit(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
+pub async fn websocket_bybit(shared_prices: Arc<Mutex<utils::DBArray>>) {
+
+  // Monitoring for price changes. Store last price in hashmap
+  let mut last_prices: HashMap<String, f64> = HashMap::new();
 
   // Confirm URL
   let bybit_url = format!("{}", BYBIT_WS_API);
@@ -25,7 +29,8 @@ pub async fn websocket_bybit(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
     "op": "subscribe",
     "args": [
         "orderbook.1.BTCUSDT",
-        "orderbook.1.ETHUSDT"
+        "orderbook.1.ETHUSDT",
+        "orderbook.1.LINKUSDT"
     ]
   }"#;
 
@@ -33,12 +38,13 @@ pub async fn websocket_bybit(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
   socket.write_message(Message::Text(subscribe_msg.to_string())).unwrap();
 
   // Read WS data
+  let mut symbol: &str = "";
+  let mut current_ask: f64 = 0.0;
+  let mut current_bid: f64 = 0.0;
   loop {
       
-    // Initialize best bid and best ask
-    let mut symbol: &str = "";
-    let mut best_bid: f64 = 0.0;
-    let mut best_ask: f64 = 0.0;
+    // Get current timestamp
+    let ts = utils::timenow();
 
     // Get socket message
     let msg = socket.read_message().expect("Error reading message");
@@ -57,12 +63,20 @@ pub async fn websocket_bybit(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
     }
 
     // Handle Snapshot
-    // Overwrite best bid and best ask
     if parsed_data["type"] == "snapshot" {
+
+      // Extract data
       symbol = parsed_data["data"]["s"].as_str().unwrap();
-      best_ask = parsed_data["data"]["a"][0][0].as_str().unwrap().parse().unwrap();
-      best_bid = parsed_data["data"]["b"][0][0].as_str().unwrap().parse().unwrap();
-      utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, best_ask, best_bid).await;
+      current_ask = parsed_data["data"]["a"][0][0].as_str().unwrap().parse().unwrap();
+      current_bid = parsed_data["data"]["b"][0][0].as_str().unwrap().parse().unwrap();
+
+      // Check if price has changed
+      let is_price_changed = utils::current_price_check(symbol, &mut last_prices, &current_ask, &current_bid);
+
+      // Store price in data if datetime allows
+      if is_price_changed {
+        utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, current_ask, current_bid).await;
+      }
       continue;
     }
 
@@ -73,21 +87,35 @@ pub async fn websocket_bybit(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
       let is_askdelta: bool = parsed_data["data"]["a"].as_array().unwrap().len() > 0;
       let is_biddelta: bool = parsed_data["data"]["b"].as_array().unwrap().len() > 0;
 
+      // Extract symbol
+      symbol = parsed_data["data"]["s"].as_str().unwrap();
+
+      // Get reference
+      let symbol_ref_ask: String = symbol.to_owned() + "ask";
+      let symbol_ref_bid: String = symbol.to_owned() + "bid";
+
       // Update best ask
       if is_askdelta {
-        best_ask = parsed_data["data"]["a"][0][0].as_str().unwrap().parse().unwrap();
+        current_ask = parsed_data["data"]["a"][0][0].as_str().unwrap().parse().unwrap();
+      } else {
+        current_ask = last_prices[&symbol_ref_ask];
       }
 
       // Update best bid
       if is_biddelta {
-        best_bid = parsed_data["data"]["b"][0][0].as_str().unwrap().parse().unwrap();
+        current_bid = parsed_data["data"]["b"][0][0].as_str().unwrap().parse().unwrap();
+      } else {
+        current_bid = last_prices[&symbol_ref_bid];
       }
 
-      // Extract symbol
-      symbol = parsed_data["data"]["s"].as_str().unwrap();
-
-      // Update DB with latest prices
-      utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, best_ask, best_bid).await;
+      // Check if price has changed
+      let is_price_changed = utils::current_price_check(symbol, &mut last_prices, &current_ask, &current_bid);
+      
+      // Store price in data if datetime allows
+      if is_price_changed {
+        utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, current_ask, current_bid).await;
+        // println!("{:?}", "bybit updated");
+      }
       continue;
     }
   }

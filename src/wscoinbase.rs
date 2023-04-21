@@ -3,14 +3,19 @@ use crate::utils;
 use tungstenite::{connect, Message};
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use std::collections::HashMap;
 use serde_json::Value;
 use url::Url;
+
 
 static COINBASE_WS_API: &str = "wss://ws-feed.pro.coinbase.com";
 
 static DB_POSITION: usize = 2;
 
-pub async fn websocket_coinbase(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
+pub async fn websocket_coinbase(shared_prices: Arc<Mutex<utils::DBArray>>) {
+
+  // Monitoring for price changes. Store last price in hashmap
+  let mut last_prices: HashMap<String, f64> = HashMap::new();
 
   // Confirm URL
   let coinbase_url = format!("{}", COINBASE_WS_API);
@@ -23,7 +28,8 @@ pub async fn websocket_coinbase(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) 
     "type": "subscribe",
     "product_ids": [
         "BTC-USD",
-        "ETH-USD"
+        "ETH-USD",
+        "LINK-USD"
     ],
     "channels": ["ticker_batch"]
   }"#;
@@ -32,12 +38,10 @@ pub async fn websocket_coinbase(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) 
   socket.write_message(Message::Text(subscribe_msg.to_string())).unwrap();
 
   // Read WS data
+  let mut symbol: &str = "";
+  let mut current_ask: f64 = 0.0;
+  let mut current_bid: f64 = 0.0;
   loop {
-
-    // Initialize best bid and best ask
-    let mut symbol: &str = "";
-    let mut best_bid: f64 = 0.0;
-    let mut best_ask: f64 = 0.0;
 
     // Get socket message
     let msg = socket.read_message().expect("Error reading message");
@@ -58,17 +62,25 @@ pub async fn websocket_coinbase(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) 
     // Handle Order book update
     if parsed_data["type"] == "ticker" {
 
-      // Update best ask
-      best_ask = parsed_data["best_ask"].as_str().unwrap().parse().unwrap();
-
-      // Update best bid
-      best_bid = parsed_data["best_bid"].as_str().unwrap().parse().unwrap();
-
       // Extract symbol
       symbol = parsed_data["product_id"].as_str().unwrap();
 
-      // Update DB with latest prices
-      utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, best_ask, best_bid).await;
+      // Get reference
+      let symbol_ref_ask: String = symbol.to_owned() + "ask";
+      let symbol_ref_bid: String = symbol.to_owned() + "bid";
+
+      // Extract bid and ask
+      current_ask = parsed_data["best_ask"].as_str().unwrap().parse().unwrap();
+      current_bid = parsed_data["best_bid"].as_str().unwrap().parse().unwrap();
+
+      // Check if price has changed
+      let is_price_changed = utils::current_price_check(symbol, &mut last_prices, &current_ask, &current_bid);
+      
+      // Store price in data if datetime allows
+      if is_price_changed {
+        utils::update_prices_db(shared_prices.clone(), symbol, DB_POSITION, current_ask, current_bid).await;
+        // println!("{:?}", "coinbase updated");
+      }
       continue;
     }
   }
