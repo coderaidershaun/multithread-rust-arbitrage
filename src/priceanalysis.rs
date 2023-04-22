@@ -4,34 +4,75 @@ use std::sync::Arc;
 
 
 // Calculate price differences
-fn divide_inner_arrays(data: &utils::DBArray) -> Vec<[f64; utils::DB_SIZE]> {
-  let mut result = Vec::new();
+fn calculate_price_differences(data: &utils::DBArray) 
+-> [[[f64; utils::EXCH_COUNT]; utils::COIN_COUNT]; utils::EXCH_COUNT] {
 
-  for collection in data.iter() {
-    let mut divided_values = [0.0; utils::DB_SIZE];
-    let first_inner_array = &collection[0];
-    let second_inner_array = &collection[1];
+  /*
+    When bid / ask > 1: There is an arbitrage opportunity
+    The bid / ask > 1 on the most inner array represents the exch you would buy at
+    The respective index of the next level up represents the asset you would trade
+    The respective index of the final level up represents the exch you would sell at
+    This function provides the output structure to make such calculations
 
-    for i in 0..utils::DB_SIZE {
-      if first_inner_array[i] != 0.0 && second_inner_array[i] != 0.0 {
-        let val = first_inner_array[i] / second_inner_array[i];
-        let rounded_result = format!("{:.5}", val).parse::<f64>().unwrap_or_default();
-        divided_values[i] = rounded_result;
-      } else {
-        divided_values[i] = 0.0;
+    Output Structure:
+      [
+          exch0     exch2    exch3    exch4    exch5   exch6    <- buy exchanges
+        [sell exchange 0
+          [1.01234, 0.99999, 1.00008, 1.21233, 0.9998, 0.9997], <- asset 0
+          [0.99823, 0.99465, 0.99765, 0.98762, 1.0523, 0.9945], <- asset 1
+          [1.34565, 1.01287, 1.00203, 0.99972, 0.9922, 1.0978], <- asset 2
+          ...
+          [1.02562, 1.11289, 1.02302, 0.99972, 0.8427, 0.7865], <- asset 10
+        ],
+        ...
+        [sell exchange 6],
+      ]
+  */
+
+  let mut ratios = [[[0.0; utils::EXCH_COUNT]; utils::COIN_COUNT]; utils::EXCH_COUNT];
+
+  // For each exchange
+  for (index, asksbids) in data.iter().enumerate() {
+    let bids_array = &asksbids[1];
+    let mut exch_array = [[0.0; utils::EXCH_COUNT]; utils::COIN_COUNT];
+
+    // For each bid price
+    for i in 0..utils::COIN_COUNT {
+      let bid_price = bids_array[i];
+      let mut divided_values = [0.0; utils::EXCH_COUNT];
+
+      // For each exchange same coin as bid price coin
+      for j in 0..utils::EXCH_COUNT {
+        let ask_price = data[j][0][i];
+
+        // Ensure ask and bid price
+        let mut rounded_val: f64 = 0.0;
+        if ask_price != 0.0 && bid_price != 0.0 {
+
+          // Get bid price ratio to ask price
+          let division = bid_price / ask_price;
+          rounded_val = format!("{:.5}", division).parse::<f64>().unwrap_or_default();
+        }
+
+        // Place value in array
+        divided_values[j] = rounded_val;
       }
+      
+      // Add to exch array
+      exch_array[i] = divided_values;
     }
-
-    result.push(divided_values);
+    
+    // Add to ratios
+    ratios[index] = exch_array;
   }
 
-  println!("{:?}", &result);
-  return result;
+  // Return result
+  return ratios;
 }
 
 
 // Import analysis
-pub async fn analyze_prices(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
+pub async fn analyze_prices(shared_prices: Arc<Mutex<utils::DBArray>>) {
 
   // Period to wait for checking prices
   println!("Starting analysis in 5 seconds...");
@@ -39,11 +80,11 @@ pub async fn analyze_prices(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
 
   loop {
       // Period to wait for checking prices
-      utils::sleep(1000).await;
+      utils::sleep(500).await;
 
       // Get a new instance of the shared prices
       // Adding in brackets to ensure lock removed whilst operation continues
-      let cloned_prices: [[[f64; 10]; 2]; 6];
+      let cloned_prices: utils::DBArray;
       {
         // Access the shared prices and analyze them
         let locked_prices = shared_prices.lock().await;
@@ -51,10 +92,9 @@ pub async fn analyze_prices(shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>) {
       }
       
       // Get price differences
-      divide_inner_arrays(&cloned_prices);
-
+      let ratios = calculate_price_differences(&cloned_prices);
 
       // // Find arbitrage
-      // println!("{:?}", cloned_prices);
+      println!("{:?}", ratios);
   }
 }

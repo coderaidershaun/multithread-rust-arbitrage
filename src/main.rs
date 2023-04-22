@@ -11,7 +11,7 @@ use priceanalysis::analyze_prices;
 use wsbinance::websocket_binance;
 use wsbybit::websocket_bybit;
 use wscoinbase::websocket_coinbase;
-use utils::{ DBArray, DB_SIZE };
+use utils::{ DBArray, COIN_COUNT };
 
 
 // Executes tasks concurrently
@@ -24,12 +24,12 @@ async fn main() {
     // 10 represents the number of token symbols (i.e BTCUSDT, ETHUSDT, etc...)
     let prices: DBArray = [
         // Asks     // Bids
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // Binance
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // Coinbase
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // ByBit
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // Uniswap V3
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // Uniswap V2
-        [[0.0; DB_SIZE], [0.0; DB_SIZE]], // Curve
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // Binance
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // Coinbase
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // ByBit
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // Uniswap V3
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // Uniswap V2
+        [[0.0; COIN_COUNT], [0.0; COIN_COUNT]], // Curve
     ];
 
     // Create variable on the heap to allow for sharing and locking variable

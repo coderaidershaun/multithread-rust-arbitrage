@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 
 // Confirm Database Size
-pub const DB_SIZE: usize = 10;
+pub const COIN_COUNT: usize = 10;
 
+// Confirm Database Size
+pub const EXCH_COUNT: usize = 6;
 
 // Confirm Database Type
-pub type DBArray = [[[f64; DB_SIZE]; 2]; 6];
+pub type DBArray = [[[f64; COIN_COUNT]; 2]; EXCH_COUNT];
 
 
 // Sleep
@@ -46,7 +48,7 @@ pub fn coin_indexes() -> HashMap<String, usize> {
 
 // Update prices array db
 pub async fn update_prices_db(
-  shared_prices: Arc<Mutex<[[[f64; 10]; 2]; 6]>>, 
+  shared_prices: Arc<Mutex<DBArray>>, 
   symbol: &str,
   db_position: usize,
   ask_price: f64,
